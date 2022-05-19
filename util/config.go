@@ -107,13 +107,13 @@ func (cfg *Config) CheckStoreDir() error {
 		if len(cfg.StoreDir) == 0 {
 			return errors.New("store dir len is zero")
 		}
-	default:
-		//
+
+		_, err := CheckDirExistAndPrivileges(cfg.StoreDir)
+		if err != nil {
+			return err
+		}
 	}
-	_, err := CheckDirExistAndPrivileges(cfg.StoreDir)
-	if err != nil {
-		return err
-	}
+
 	return nil
 }
 
