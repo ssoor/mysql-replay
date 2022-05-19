@@ -25,6 +25,8 @@ package cmd
 
 import (
 	"fmt"
+	"time"
+
 	"github.com/bobguo/mysql-replay/sqlreplay"
 	"github.com/bobguo/mysql-replay/stream"
 	"github.com/bobguo/mysql-replay/util"
@@ -34,7 +36,6 @@ import (
 	"github.com/google/gopacket/reassembly"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
-	"time"
 )
 
 //const MAXPACKETLEN = 16 * 1024 * 1024
@@ -58,7 +59,7 @@ func getFilter(port uint16) string {
 	return filter
 }
 
-func trafficCapture(cfg *util.Config,options stream.FactoryOptions) error {
+func trafficCapture(cfg *util.Config, options stream.FactoryOptions) error {
 
 	var packetNum uint64
 	//var InvalidMsgPktNum uint64
@@ -122,10 +123,8 @@ func trafficCapture(cfg *util.Config,options stream.FactoryOptions) error {
 			stats, err := handle.Stats()
 			cfg.Log.Warn(fmt.Sprintf("flushing all streams that haven't seen"+
 				" packets in the last 2 minutes, pcap stats: %+v %v", stats, err))
-			flushed, closed := assembler.FlushCloseOlderThan(time.Now().Add(-2*time.Minute))
+			flushed, closed := assembler.FlushCloseOlderThan(time.Now().Add(-2 * time.Minute))
 			cfg.Log.Warn(fmt.Sprintf("flushed old connect %v-%v", flushed, closed))
-		default :
-			//
 		}
 
 	}
@@ -133,12 +132,11 @@ func trafficCapture(cfg *util.Config,options stream.FactoryOptions) error {
 	//return nil
 }
 
-
 func NewOnlineReplayCommand() *cobra.Command {
 	//Replay sql from online net packet
 	var (
-		options       = stream.FactoryOptions{Synchronized: true}
-		cfg = &util.Config{RunType: util.RunOnline}
+		options = stream.FactoryOptions{Synchronized: true}
+		cfg     = &util.Config{RunType: util.RunOnline}
 	)
 	cmd := &cobra.Command{
 		Use:   "replay",
@@ -160,7 +158,7 @@ func NewOnlineReplayCommand() *cobra.Command {
 			go printTime()
 			go AddPortListenAndServer(cfg.ListenPort, cfg.OutputDir, cfg.StoreDir)
 			//handle online packet
-			err = trafficCapture(cfg,options)
+			err = trafficCapture(cfg, options)
 			if err != nil && err != ERRORTIMEOUT {
 				return err
 			} else if err == ERRORTIMEOUT {
