@@ -33,7 +33,7 @@ func NewTextDumpReplayCommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var err error
 			cfg.PreFileSize = cfg.PreFileSize * 1024 * 1024
-			log := zap.L().Named("text-replay")
+			cfg.Log = zap.L().Named("text-replay")
 			cfg.Log.Info("process begin run at " + time.Now().String())
 			if len(args) == 0 {
 				return cmd.Help()
@@ -41,7 +41,7 @@ func NewTextDumpReplayCommand() *cobra.Command {
 
 			err = cfg.CheckParamValid()
 			if err != nil {
-				log.Error("parse param error , " + err.Error())
+				cfg.Log.Error("parse param error , " + err.Error())
 				return nil
 			}
 
@@ -59,16 +59,16 @@ func NewTextDumpReplayCommand() *cobra.Command {
 
 			for _, in := range args {
 				zap.L().Info("processing " + in)
-				err = HandlePcapFileByText(in, assembler, &lastFlushTime, cfg.FlushInterval, cfg.Log)
+				err = HandlePcapFileByText(in, cfg, assembler, &lastFlushTime, cfg.FlushInterval, cfg.Log)
 				if err != nil {
 					return err
 				}
 			}
 
-			log.Info("read packet end ,begin close all goroutine")
+			cfg.Log.Info("read packet end ,begin close all goroutine")
 			i := assembler.FlushAll()
-			log.Info(fmt.Sprintf("read packet end ,end close all goroutine , %v groutine", i))
-			log.Info("process end run at " + time.Now().String())
+			cfg.Log.Info(fmt.Sprintf("read packet end ,end close all goroutine , %v groutine", i))
+			cfg.Log.Info("process end run at " + time.Now().String())
 			return nil
 		},
 	}

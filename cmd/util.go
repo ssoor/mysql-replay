@@ -31,17 +31,26 @@ func (c *Context) GetCaptureInfo() gopacket.CaptureInfo {
 func HandlePcapFileByDir(ctx context.Context, name string, cfg *util.Config, assembler *reassembly.Assembler,
 	lastFlushTime *time.Time, errChan chan error, handleFileNum *int32) {
 	cfg.Log.Info("process file " + name)
-	var f *pcap.Handle
+	var handle *pcap.Handle
 	var err error
-	f, err = pcap.OpenOffline(name)
+	handle, err = pcap.OpenOffline(name)
 	if err != nil {
 		cfg.Log.Error("open pcap file fail " + err.Error())
 		errChan <- err
 		return
 	}
-	defer f.Close()
+
+	//set filter
+	filter := getFilter(cfg.SrcPort)
+	err = handle.SetBPFFilter(filter)
+	if err != nil {
+		errChan <- err
+		return
+	}
+
+	defer handle.Close()
 	defer atomic.AddInt32(handleFileNum, -1)
-	pkts := gopacket.NewPacketSource(f, f.LinkType()).Packets()
+	pkts := gopacket.NewPacketSource(handle, handle.LinkType()).Packets()
 	for {
 		select {
 		case pkt, ok := <-pkts:
@@ -69,24 +78,33 @@ func HandlePcapFileByDir(ctx context.Context, name string, cfg *util.Config, ass
 	}
 }
 
-func HandlePcapFileByText(name string, assembler *reassembly.Assembler, lastFlushTime *time.Time,
+func HandlePcapFileByText(name string, cfg *util.Config, assembler *reassembly.Assembler, lastFlushTime *time.Time,
 	flushInterval time.Duration, log *zap.Logger) error {
 	fmt.Println("process file ", name)
 
-	var f *pcap.Handle
+	var handle *pcap.Handle
 	var err error
-	f, err = pcap.OpenOffline(name)
+	handle, err = pcap.OpenOffline(name)
 	if err != nil {
 		log.Error("open pcap file fail " + err.Error())
 		return errors.Annotate(err, "open "+name)
 	}
-	defer f.Close()
 
-	src := gopacket.NewPacketSource(f, f.LinkType())
+	//set filter
+	filter := getFilter(cfg.SrcPort)
+	cfg.Log.Info("SetBPFFilter " + filter)
+	err = handle.SetBPFFilter(filter)
+	if err != nil {
+		return errors.Annotate(err, "SetBPFFilter "+name)
+	}
+
+	defer handle.Close()
+
+	src := gopacket.NewPacketSource(handle, handle.LinkType())
 	for pkt := range src.Packets() {
-		if meta := pkt.Metadata(); meta != nil && meta.Timestamp.Sub(*lastFlushTime) > flushInterval {
+		if meta := pkt.Metadata(); meta != nil && meta.Timestamp.Sub(*lastFlushTime) > cfg.FlushInterval {
 			flushed, closed := assembler.FlushCloseOlderThan(*lastFlushTime)
-			log.Info(fmt.Sprintf("flush old connect fulshed:%v,closed:%v", flushed, closed))
+			cfg.Log.Info(fmt.Sprintf("flush old connect fulshed:%v,closed:%v", flushed, closed))
 			*lastFlushTime = meta.Timestamp
 		}
 
