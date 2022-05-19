@@ -3,28 +3,28 @@ package stream
 import (
 	"encoding/hex"
 	"fmt"
-	"github.com/bobguo/mysql-replay/stats"
-	"github.com/bobguo/mysql-replay/util"
 	"strconv"
 	"strings"
+
+	"github.com/bobguo/mysql-replay/stats"
+	"github.com/bobguo/mysql-replay/util"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/reassembly"
 )
 
-
-
 type MySQLEvent struct {
-	Time   int64         `json:"time"`
-	Type   uint64        `json:"type"`
-	StmtID uint64        `json:"stmtID,omitempty"`
-	Params []interface{} `json:"params,omitempty"`
-	DB     string        `json:"db,omitempty"`
-	Query  string        `json:"query,omitempty"`
-	Pr     *PacketRes
-	Rr     *ReplayRes
-
+	Conn     ConnID        `json:"conn"`
+	Time     int64         `json:"time"`
+	Type     uint64        `json:"type"`
+	StmtID   uint64        `json:"stmtID,omitempty"`
+	Params   []interface{} `json:"params,omitempty"`
+	DB       string        `json:"db,omitempty"`
+	Username string        `json:"username,omitempty"`
+	Query    string        `json:"query,omitempty"`
+	Pr       *PacketRes
+	Rr       *ReplayRes
 }
 
 func (event *MySQLEvent) Reset(params []interface{}) *MySQLEvent {
@@ -37,7 +37,7 @@ func (event *MySQLEvent) Reset(params []interface{}) *MySQLEvent {
 	return event
 }
 
-func (event *MySQLEvent)NewReplayRes(){
+func (event *MySQLEvent) NewReplayRes() {
 	event.Rr = new(ReplayRes)
 	rr := event.Rr
 	rr.ErrNO = 0
@@ -52,21 +52,22 @@ func (event *MySQLEvent)NewReplayRes(){
 }
 
 func (event *MySQLEvent) String() string {
+	conn := event.Conn.HashStr()
 	switch event.Type {
 	case util.EventQuery:
-		return fmt.Sprintf("execute {query:%q} @ %d", formatQuery(event.Query), event.Time)
+		return fmt.Sprintf("%s execute {query:%q} @ %d", conn, formatQuery(event.Query), event.Time)
 	case util.EventStmtExecute:
-		return fmt.Sprintf("execute stmt {id:%d,params:%v} @%d", event.StmtID, event.Params, event.Time)
+		return fmt.Sprintf("%s execute stmt {id:%d,params:%v} @%d", conn, event.StmtID, event.Params, event.Time)
 	case util.EventStmtPrepare:
-		return fmt.Sprintf("prepare stmt {id:%d,query:%q} @%d", event.StmtID, formatQuery(event.Query), event.Time)
+		return fmt.Sprintf("%s prepare stmt {id:%d,query:%q} @%d", conn, event.StmtID, formatQuery(event.Query), event.Time)
 	case util.EventStmtClose:
-		return fmt.Sprintf("close stmt {id:%d} @%d", event.StmtID, event.Time)
+		return fmt.Sprintf("%s close stmt {id:%d} @%d", conn, event.StmtID, event.Time)
 	case util.EventHandshake:
-		return fmt.Sprintf("connect {db:%q} @%d", event.DB, event.Time)
+		return fmt.Sprintf("%s connect {username:%q,db:%q} @%d", conn, event.Username, event.DB, event.Time)
 	case util.EventQuit:
-		return fmt.Sprintf("quit @%d", event.Time)
+		return fmt.Sprintf("%s quit @%d", conn, event.Time)
 	default:
-		return fmt.Sprintf("unknown event {type:%v} @%d", event.Type, event.Time)
+		return fmt.Sprintf("%s unknown event {type:%v} @%d", conn, event.Type, event.Time)
 	}
 }
 
@@ -386,13 +387,16 @@ func (h *eventHandler) Accept(ci gopacket.CaptureInfo, dir reassembly.TCPFlowDir
 	return true
 }
 
-func (h *eventHandler)ParsePacket(pkt MySQLPacket) *MySQLEvent{
+func (h *eventHandler) ParsePacket(pkt MySQLPacket) *MySQLEvent {
 	h.fsm.Handle(pkt)
 	if !h.fsm.Ready() || !h.fsm.Changed() {
 		//h.fsm.log.Warn("packet is not ready")
 		return nil
 	}
-	e := &MySQLEvent{Time: pkt.Time.UnixNano()}
+	e := &MySQLEvent{
+		Conn: pkt.Conn,
+		Time: pkt.Time.UnixNano(),
+	}
 	switch h.fsm.State() {
 	case util.StateComQuery2:
 		e.Type = util.EventQuery
@@ -418,6 +422,7 @@ func (h *eventHandler)ParsePacket(pkt MySQLPacket) *MySQLEvent{
 	case util.StateHandshake1:
 		e.Type = util.EventHandshake
 		e.DB = h.fsm.Schema()
+		e.Username = h.fsm.Username()
 
 	case util.StateComQuit:
 		e.Type = util.EventQuit
@@ -427,28 +432,26 @@ func (h *eventHandler)ParsePacket(pkt MySQLPacket) *MySQLEvent{
 	return e
 }
 
-
-func (h *eventHandler)AsyncParsePacket(){
+func (h *eventHandler) AsyncParsePacket() {
 	h.fsm.log.Info("thread begin to run for parse packet " + h.conn.HashStr())
 	for {
 		pkt, ok := <-h.fsm.c
 		if ok {
 			e := h.ParsePacket(pkt)
-			if e==nil{
+			if e == nil {
 				continue
 			}
-			stats.AddStatic("DealPacket",1,false)
+			stats.AddStatic("DealPacket", 1, false)
 			e.Pr = h.fsm.pr
 			h.fsm.pr = nil
 			h.impl.OnEvent(*e)
-		}else {
+		} else {
 			h.fsm.wg.Done()
 			h.fsm.log.Info("thread end to run for parse packet " + h.conn.HashStr())
 			return
 		}
 	}
 }
-
 
 //deal  packet from pacp file
 func (h *eventHandler) OnPacket(pkt MySQLPacket) {
@@ -457,13 +460,13 @@ func (h *eventHandler) OnPacket(pkt MySQLPacket) {
 		h.fsm.wg.Add(1)
 		go h.AsyncParsePacket()
 	})
-	h.fsm.c<- pkt
-	stats.AddStatic("ReadPacket",1,false)
-	stats.AddStatic("PacketChanLen",uint64(len(h.fsm.c)),true)
+	h.fsm.c <- pkt
+	stats.AddStatic("ReadPacket", 1, false)
+	stats.AddStatic("PacketChanLen", uint64(len(h.fsm.c)), true)
 	/*
-	if len(h.fsm.c) >90000 && len(h.fsm.c)% 1000 ==0 {
-		h.fsm.log.Warn("packet Channel is nearly  full , " + fmt.Sprintf("%v-%v",len(h.fsm.c),100000))
-	}
+		if len(h.fsm.c) >90000 && len(h.fsm.c)% 1000 ==0 {
+			h.fsm.log.Warn("packet Channel is nearly  full , " + fmt.Sprintf("%v-%v",len(h.fsm.c),100000))
+		}
 	*/
 }
 
