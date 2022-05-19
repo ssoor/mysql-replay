@@ -5,19 +5,18 @@ import (
 	"database/sql/driver"
 	"encoding/binary"
 	"fmt"
+	"io"
+	"math"
+	"strconv"
+	"sync"
+	"time"
+
 	"github.com/bobguo/mysql-replay/util"
 	"github.com/go-sql-driver/mysql"
 	"github.com/google/gopacket/reassembly"
 	"github.com/pingcap/errors"
 	"go.uber.org/zap"
-	"io"
-	"math"
-	"sync"
 )
-
-
-
-
 
 func StateName(state int) string {
 	switch state {
@@ -117,31 +116,29 @@ type PacketRes struct {
 	ifReadResEnd bool
 }
 
-func (pr *PacketRes)GetSqlBeginTime() uint64{
+func (pr *PacketRes) GetSqlBeginTime() uint64 {
 	return pr.sqlBeginTime
 }
 
-func (pr *PacketRes)GetSqlEndTime() uint64{
+func (pr *PacketRes) GetSqlEndTime() uint64 {
 	return pr.sqlEndTime
 }
 
-func (pr *PacketRes)GetErrNo() uint16{
+func (pr *PacketRes) GetErrNo() uint16 {
 	return pr.errNo
 }
-func (pr *PacketRes)GetErrDesc() string{
+func (pr *PacketRes) GetErrDesc() string {
 	return pr.errDesc
 }
 
-func  (pr *PacketRes)GetColumnVal() [][]driver.Value{
+func (pr *PacketRes) GetColumnVal() [][]driver.Value {
 	if pr.bRows != nil {
 		return pr.bRows.rs.columnValue
-	} else if pr.tRows !=nil  {
+	} else if pr.tRows != nil {
 		return pr.tRows.rs.columnValue
 	}
 	return nil
 }
-
-
 
 //Store network packet, parse SQL statement and result packet
 type MySQLFSM struct {
@@ -160,8 +157,9 @@ type MySQLFSM struct {
 	params  []interface{} // com_stmt_execute
 
 	// session info
-	schema string          // handshake1
-	stmts  map[uint32]Stmt // com_stmt_prepare,com_stmt_execute,com_stmt_close
+	schema   string          // handshake1
+	username string          // handshake1
+	stmts    map[uint32]Stmt // com_stmt_prepare,com_stmt_execute,com_stmt_close
 
 	// current command
 	data    *bytes.Buffer
@@ -169,7 +167,6 @@ type MySQLFSM struct {
 	start   int
 	count   int
 	pr      *PacketRes
-
 }
 
 func (fsm *MySQLFSM) State() int { return fsm.state }
@@ -190,6 +187,8 @@ func (fsm *MySQLFSM) StmtParams() []interface{} { return fsm.params }
 
 func (fsm *MySQLFSM) Schema() string { return fsm.schema }
 
+func (fsm *MySQLFSM) Username() string { return fsm.username }
+
 func (fsm *MySQLFSM) Changed() bool { return fsm.changed }
 
 func (fsm *MySQLFSM) Ready() bool {
@@ -202,7 +201,6 @@ func (fsm *MySQLFSM) Ready() bool {
 func (fsm *MySQLFSM) InitValue() {
 	fsm.set(util.StateInit, "recv packet with seq(0)")
 	pr := new(PacketRes)
-	fsm.pr = pr
 	pr.readColEnd = false
 	pr.packetnum = 0
 	pr.columnNum = 0
@@ -212,6 +210,8 @@ func (fsm *MySQLFSM) InitValue() {
 	pr.tRows = nil
 	pr.ifReadColEndEofPacket = false
 	pr.ifReadResEnd = false
+
+	fsm.pr = pr
 	fsm.packets = fsm.packets[:0]
 }
 
@@ -236,8 +236,8 @@ func (fsm *MySQLFSM) Handle(pkt MySQLPacket) {
 		fsm.setStatusWithNoChange(util.StateSkipPacket)
 		//fsm.setStatusWithNoChange(StateInit)
 		stateChgAfter := StateName(fsm.State())
-		fsm.log.Debug("pkt seq is not correct "+
-			fmt.Sprintf("%v-%v,%v-%v",fsm.nextSeq(),pkt.Seq,stateChgBefore,stateChgAfter))
+		fsm.log.Debug("pkt seq is not correct " +
+			fmt.Sprintf("%v-%v,%v-%v", fsm.nextSeq(), pkt.Seq, stateChgBefore, stateChgAfter))
 		return
 	}
 
@@ -270,7 +270,7 @@ func (fsm *MySQLFSM) Handle(pkt MySQLPacket) {
 			fsm.set(util.StateComQuery2)
 			fsm.pr.sqlEndTime = uint64(pkt.Time.UnixNano())
 			fsm.log.Debug("the query exec time is :" +
-				fmt.Sprintf("%v", fsm.pr.sqlEndTime-fsm.pr.sqlBeginTime) +
+				fmt.Sprintf("%v", (fsm.pr.sqlEndTime-fsm.pr.sqlBeginTime)/uint64(time.Millisecond)) +
 				"ms")
 		}
 	} else if fsm.state == util.StateComStmtExecute || fsm.state == util.StateComStmtExecute1 {
@@ -293,7 +293,7 @@ func (fsm *MySQLFSM) Handle(pkt MySQLPacket) {
 			fsm.pr.sqlEndTime = uint64(pkt.Time.UnixNano())
 			fsm.log.Debug("sql end time is :" + fmt.Sprintf("%v", fsm.pr.sqlEndTime))
 			fsm.log.Debug("the query exec time is :" +
-				fmt.Sprintf("%v", fsm.pr.sqlEndTime-fsm.pr.sqlBeginTime) +
+				fmt.Sprintf("%v", (fsm.pr.sqlEndTime-fsm.pr.sqlBeginTime)/uint64(time.Millisecond)) +
 				"ms")
 		}
 	}
@@ -312,7 +312,7 @@ func (fsm *MySQLFSM) nextSeq() int {
 	if n == 0 {
 		return 0
 	}
-	return fsm.packets[n-1].Seq + 1
+	return int(uint8(fsm.packets[n-1].Seq + 1))
 }
 
 func (fsm *MySQLFSM) load(k int) bool {
@@ -378,11 +378,13 @@ func (fsm *MySQLFSM) set(to int, msg ...string) {
 		tmpl += fmt.Sprintf("{query:%q,id:%d,num-params:%d}", query, fsm.stmt.ID, fsm.stmt.NumParams)
 	case util.StateHandshake1:
 		tmpl += fmt.Sprintf("{schema:%q}", fsm.schema)
+	case util.StateInit:
+		return
 	}
 	if len(msg) > 0 {
-		tmpl += ": " + msg[0]
+		tmpl += "[" + strconv.Itoa(to) + "]: " + msg[0]
 	}
-	fsm.log.Debug(tmpl + StateName(from) + StateName(to))
+	fsm.log.Info(tmpl + " " + StateName(from) + " " + StateName(to))
 }
 
 func (fsm *MySQLFSM) assertDir(exp reassembly.TCPFlowDirection) bool {
@@ -701,10 +703,12 @@ func (fsm *MySQLFSM) handleHandshakeResponse() {
 			fsm.set(util.StateUnknown, "handshake: cannot read max-packet size, character set and reserved")
 			return
 		}
-		if _, data, ok = readBytesNUL(data); !ok {
+		var username []byte
+		if username, data, ok = readBytesNUL(data); !ok {
 			fsm.set(util.StateUnknown, "handshake: cannot read username")
 			return
 		}
+		fsm.username = string(username)
 		if flags&clientPluginAuthLenEncClientData > 0 {
 			var n uint64
 			if n, data, ok = readLenEncUint(data); !ok {
@@ -744,10 +748,12 @@ func (fsm *MySQLFSM) handleHandshakeResponse() {
 			fsm.set(util.StateUnknown, "handshake: cannot read max-packet size")
 			return
 		}
-		if _, data, ok = readBytesNUL(data); !ok {
+		var username []byte
+		if username, data, ok = readBytesNUL(data); !ok {
 			fsm.set(util.StateUnknown, "handshake: cannot read username")
 			return
 		}
+		fsm.username = string(username)
 		if flags&clientConnectWithDB > 0 {
 			var db []byte
 			if _, data, ok = readBytesNUL(data); !ok {
@@ -1132,8 +1138,8 @@ func (fsm *MySQLFSM) handleReadSQLResult() error { //ColumnNum() error {
 		if fsm.pr.tRows == nil {
 			rows := new(textRows)
 			fsm.pr.tRows = rows
-			rows.rs.columnValue = make([][]driver.Value, 0,fsm.pr.columnNum)
-			rows.rs.columns = make([]mysqlField, 0,fsm.pr.columnNum)
+			rows.rs.columnValue = make([][]driver.Value, 0, fsm.pr.columnNum)
+			rows.rs.columns = make([]mysqlField, 0, fsm.pr.columnNum)
 			rows.fsm = fsm
 		}
 		rows = fsm.pr.tRows
@@ -1219,8 +1225,8 @@ func (fsm *MySQLFSM) handleReadPrepareExecResult() error {
 		if fsm.pr.bRows == nil {
 			rows = new(binaryRows)
 			fsm.pr.bRows = rows
-			rows.rs.columns = make([]mysqlField, 0,fsm.pr.columnNum)
-			rows.rs.columnValue = make([][]driver.Value, 0,fsm.pr.columnNum)
+			rows.rs.columns = make([]mysqlField, 0, fsm.pr.columnNum)
+			rows.rs.columnValue = make([][]driver.Value, 0, fsm.pr.columnNum)
 			rows.fsm = fsm
 		}
 		rows = fsm.pr.bRows
@@ -1497,7 +1503,6 @@ func (fsm *MySQLFSM) readUntilEOF() error {
 		}
 	}
 }
-
 
 func ConvertAssignRows(a driver.Value, as *string) error {
 	return convertAssignRows(as, a)
