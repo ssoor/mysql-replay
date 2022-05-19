@@ -470,7 +470,7 @@ func (fsm *MySQLFSM) handleInitPacket() {
 		} else {
 			fsm.set(util.StateUnknown, "init: unsupported packet")
 			//The first character indicates the current command type
-			fsm.log.Warn("unsupported command :" + string(fsm.data.Bytes()[:1]))
+			fsm.log.Warn("unsupported command :" + strconv.Itoa(int(fsm.data.Bytes()[0])))
 		}
 	}
 }
