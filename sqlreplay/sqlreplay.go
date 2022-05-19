@@ -29,6 +29,12 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"os"
+	"reflect"
+	"sync"
+	"time"
+	"unsafe"
+
 	"github.com/bobguo/mysql-replay/result"
 	"github.com/bobguo/mysql-replay/stats"
 	"github.com/bobguo/mysql-replay/stream"
@@ -36,11 +42,6 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"go.uber.org/zap"
-	"os"
-	"reflect"
-	"sync"
-	"time"
-	"unsafe"
 )
 
 //Store prepare statement and handle
@@ -49,30 +50,30 @@ type statement struct {
 	handle *sql.Stmt
 }
 
-func NewReplayEventHandler(conn stream.ConnID,log *zap.Logger, cfg *util.Config) *ReplayEventHandler {
+func NewReplayEventHandler(conn stream.ConnID, log *zap.Logger, cfg *util.Config) *ReplayEventHandler {
 	return &ReplayEventHandler{
-		pconn:       conn,
-		log:         log,
-		dsn:         cfg.Dsn,
-		MySQLConfig: cfg.MySQLConfig,
-		ctx:         context.Background(),
-		ch:          make(chan stream.MySQLEvent, 10000),
-		wg:          new(sync.WaitGroup),
-		stmts:       make(map[uint64]statement),
-		once:        new(sync.Once),
-		wf:          NewWriteFile(),
-		fileNamePrefix: conn.HashStr()+":"+ conn.SrcAddr(),
-		filePath: cfg.OutputDir,
-		storePath : cfg.StoreDir,
-		preFileSize: cfg.PreFileSize,
-		cfg:cfg,
+		pconn:          conn,
+		log:            log,
+		dsn:            cfg.Dsn,
+		MySQLConfig:    cfg.MySQLConfig,
+		ctx:            context.Background(),
+		ch:             make(chan stream.MySQLEvent, 10000),
+		wg:             new(sync.WaitGroup),
+		stmts:          make(map[uint64]statement),
+		once:           new(sync.Once),
+		wf:             NewWriteFile(),
+		fileNamePrefix: conn.HashStr() + ":" + conn.SrcAddr(),
+		filePath:       cfg.OutputDir,
+		storePath:      cfg.StoreDir,
+		preFileSize:    cfg.PreFileSize,
+		cfg:            cfg,
 	}
 }
 
 //Used for replay  SQL
 type ReplayEventHandler struct {
-	pconn                       stream.ConnID
-	dsn                         string
+	pconn stream.ConnID
+	dsn   string
 	//fsm                         *stream.MySQLFSM
 	log                         *zap.Logger
 	MySQLConfig                 *mysql.Config
@@ -89,19 +90,19 @@ type ReplayEventHandler struct {
 	rrGetCheckPointTimeInterval int64
 	//rrContinueRun               bool
 	//rrNeedReplay bool
-	once         *sync.Once
-	ch           chan stream.MySQLEvent
-	wg           *sync.WaitGroup
-	file         *os.File
-	wf           *WriteFile
+	once           *sync.Once
+	ch             chan stream.MySQLEvent
+	wg             *sync.WaitGroup
+	file           *os.File
+	wf             *WriteFile
 	fileNamePrefix string
-	fileName string
-	fileOpenTime time.Time
-	filePath string
-	storePath string
-	preFileSize uint64
-	pos uint64
-	cfg *util.Config
+	fileName       string
+	fileOpenTime   time.Time
+	filePath       string
+	storePath      string
+	preFileSize    uint64
+	pos            uint64
+	cfg            *util.Config
 }
 
 type WriteFile struct {
@@ -121,18 +122,18 @@ func NewWriteFile() *WriteFile {
 }
 
 func (h *ReplayEventHandler) GenerateNextFileName() string {
-	return h.fileNamePrefix+util.FileNameSuffix.GetNextFileNameSuffix()
+	return h.fileNamePrefix + util.FileNameSuffix.GetNextFileNameSuffix()
 }
 
-func (h *ReplayEventHandler)OpenNextFile() error{
+func (h *ReplayEventHandler) OpenNextFile() error {
 	h.fileName = h.GenerateNextFileName()
 	var err error
-	h.file,err = util.OpenFile(h.filePath,h.fileName)
-	if err!=nil{
+	h.file, err = util.OpenFile(h.filePath, h.fileName)
+	if err != nil {
 		h.file = nil
 		return err
 	}
-	h.pos=0
+	h.pos = 0
 	h.fileOpenTime = time.Now()
 	return nil
 }
@@ -140,7 +141,7 @@ func (h *ReplayEventHandler)OpenNextFile() error{
 //change file every 10 min
 //change file when file size lg than specified
 func (h *ReplayEventHandler) CheckIfChangeFile() bool {
-	if time.Since(h.fileOpenTime).Seconds() > float64(10 *60){
+	if time.Since(h.fileOpenTime).Seconds() > float64(10*60) {
 		return true
 	}
 
@@ -150,22 +151,21 @@ func (h *ReplayEventHandler) CheckIfChangeFile() bool {
 	return false
 }
 
-
 func (h *ReplayEventHandler) CloseAndBackupFile() error {
-	if h.file !=nil{
+	if h.file != nil {
 		err := h.file.Sync()
-		if err !=nil{
+		if err != nil {
 			return err
 		}
 		err = h.file.Close()
 		h.file = nil
-		if err!=nil{
+		if err != nil {
 			return err
 		}
 	}
-	if len(h.storePath)>0 {
+	if len(h.storePath) > 0 {
 		err := os.Rename(h.filePath+"/"+h.fileName, h.storePath+"/"+h.fileName)
-		if err !=nil{
+		if err != nil {
 			return err
 		}
 	}
@@ -174,9 +174,9 @@ func (h *ReplayEventHandler) CloseAndBackupFile() error {
 
 func (h *ReplayEventHandler) DoWriteResToFile() {
 
-	if h.file ==nil{
+	if h.file == nil {
 		err := h.OpenNextFile()
-		if err!=nil{
+		if err != nil {
 			h.log.Warn("open file fail , " + err.Error())
 			h.wf.wg.Done()
 			return
@@ -187,8 +187,8 @@ func (h *ReplayEventHandler) DoWriteResToFile() {
 	for {
 		e, ok := <-h.wf.ch
 		if ok {
-			res, err := result.NewResForWriteFile(e.Pr, e.Rr, &e,h.filePath,h.fileNamePrefix,
-				h.file,h.pos)
+			res, err := result.NewResForWriteFile(e.Pr, e.Rr, &e, h.filePath, h.fileNamePrefix,
+				h.file, h.pos)
 			if err != nil {
 				if err != nil {
 					h.log.Warn("new write compare result to file struct fail , " + err.Error())
@@ -196,19 +196,19 @@ func (h *ReplayEventHandler) DoWriteResToFile() {
 			} else {
 				h.pos, err = res.WriteResToFile()
 				if err != nil {
-					stats.AddStatic("WriteResFileFail",1,false )
+					stats.AddStatic("WriteResFileFail", 1, false)
 					h.log.Warn("write compare result to file fail , " + err.Error())
 				}
 			}
-			stats.AddStatic("WriteRes",1,false)
-			if h.CheckIfChangeFile(){
-				err= h.CloseAndBackupFile()
-				if err !=nil{
+			stats.AddStatic("WriteRes", 1, false)
+			if h.CheckIfChangeFile() {
+				err = h.CloseAndBackupFile()
+				if err != nil {
 					h.log.Warn("close or backup file fail , " + err.Error())
 				}
-				err= h.OpenNextFile()
-				if err!=nil{
-					h.log.Error("open file fail , " + err.Error()+ " program will exit now")
+				err = h.OpenNextFile()
+				if err != nil {
+					h.log.Error("open file fail , " + err.Error() + " program will exit now")
 					//TODO Unable to open the next file, the current solution is to
 					//exit the program and consider a better solution later
 					os.Exit(-1)
@@ -217,7 +217,7 @@ func (h *ReplayEventHandler) DoWriteResToFile() {
 			}
 		} else {
 			err := h.CloseAndBackupFile()
-			if err !=nil{
+			if err != nil {
 				h.log.Warn("close and backup file fail , " + err.Error())
 			}
 			h.wf.wg.Done()
@@ -237,33 +237,33 @@ func (h *ReplayEventHandler) AsyncWriteResToFile(e stream.MySQLEvent) {
 			go h.DoWriteResToFile()
 		})
 	h.wf.ch <- e
-	stats.AddStatic("GetRes",1,false)
-	stats.AddStatic("WriteResChanLen",uint64(len(h.wf.ch)),true)
+	stats.AddStatic("GetRes", 1, false)
+	stats.AddStatic("WriteResChanLen", uint64(len(h.wf.ch)), true)
 	/*
-	if len(h.wf.ch) >90000 && len(h.wf.ch)% 1000 ==0{
-		h.log.Warn("write Channel is nearly  full , " + fmt.Sprintf("%v-%v",len(h.wf.ch),100000))
-	}
-	 */
+		if len(h.wf.ch) >90000 && len(h.wf.ch)% 1000 ==0{
+			h.log.Warn("write Channel is nearly  full , " + fmt.Sprintf("%v-%v",len(h.wf.ch),100000))
+		}
+	*/
 }
 
-func (h *ReplayEventHandler)WriteEvent(e stream.MySQLEvent){
-	js ,err := json.Marshal(e)
-	if err!=nil{
-		stats.AddStatic("FormatJsonFail",1,false )
-		h.log.Warn(fmt.Sprintf("format struct to json fail , %v",err))
+func (h *ReplayEventHandler) WriteEvent(e stream.MySQLEvent) {
+	js, err := json.Marshal(e)
+	if err != nil {
+		stats.AddStatic("FormatJsonFail", 1, false)
+		h.log.Warn(fmt.Sprintf("format struct to json fail , %v", err))
 		return
 	} else {
-		h.log.Info(fmt.Sprintf("output of data within 100ms of the moment of consistency , %v",js))
+		h.log.Info(fmt.Sprintf("output of data within 100ms of the moment of consistency , %v", js))
 		return
 	}
 }
 
-func (h *ReplayEventHandler) DoEvent(e stream.MySQLEvent){
-	if e.Type == util.EventStmtPrepare || e.Type == util.EventStmtClose{
+func (h *ReplayEventHandler) DoEvent(e stream.MySQLEvent) {
+	if e.Type == util.EventStmtPrepare || e.Type == util.EventStmtClose {
 		h.ReplayEventAndWriteRes(e)
 		return
 	}
-	handleType:=h.cfg.CheckNeedReplay(e.Time)
+	handleType := h.cfg.CheckNeedReplay(e.Time)
 	switch handleType {
 	case util.NotWriteLog:
 		return
@@ -272,12 +272,11 @@ func (h *ReplayEventHandler) DoEvent(e stream.MySQLEvent){
 	case util.NeedReplaySQL:
 		h.ReplayEventAndWriteRes(e)
 	default:
-		h.log.Warn(fmt.Sprintf("unsport case %v",handleType))
+		h.log.Warn(fmt.Sprintf("unsport case %v", handleType))
 	}
 }
 
-
-func (h *ReplayEventHandler)ReplayEventAndWriteRes(e stream.MySQLEvent){
+func (h *ReplayEventHandler) ReplayEventAndWriteRes(e stream.MySQLEvent) {
 	err := h.ApplyEvent(h.ctx, &e)
 	if err != nil {
 		if mysqlError, ok := err.(*mysql.MySQLError); ok {
@@ -288,14 +287,14 @@ func (h *ReplayEventHandler)ReplayEventAndWriteRes(e stream.MySQLEvent){
 			e.Rr.ErrDesc = "Failed to execute SQL and failed to convert to mysql error"
 		}
 	}
-	stats.AddStatic("DealSQL",1,false)
+	stats.AddStatic("DealSQL", 1, false)
 	h.AsyncWriteResToFile(e)
 }
 
 func (h *ReplayEventHandler) ReplayEvent(ch chan stream.MySQLEvent, wg *sync.WaitGroup) {
 	defer func() {
 		if err := recover(); err != nil {
-				h.log.Warn(err.(string))
+			h.log.Warn(err.(string))
 		}
 
 	}()
@@ -326,8 +325,8 @@ func (h *ReplayEventHandler) OnEvent(e stream.MySQLEvent) {
 		go h.ReplayEvent(h.ch, h.wg)
 	})
 	h.ch <- e
-	stats.AddStatic("GetSQL",1,false)
-	stats.AddStatic("SQLChanLen",uint64(len(h.ch)),true)
+	stats.AddStatic("GetSQL", 1, false)
+	stats.AddStatic("SQLChanLen", uint64(len(h.ch)), true)
 	/*if len(h.ch) >90000 && len(h.ch)% 1000 ==0{
 		h.log.Warn("sql Channel is nearly  full , " + fmt.Sprintf("%v-%v",len(h.ch),100000))
 	}*/
@@ -343,6 +342,11 @@ func (h *ReplayEventHandler) OnClose() {
 }
 
 func (h *ReplayEventHandler) ApplyEvent(ctx context.Context, e *stream.MySQLEvent) error {
+	if len(h.cfg.Dsn) == 0 {
+		//skip apply mysql event on replay server
+		return nil
+	}
+
 	//apply mysql event on replay server
 	var err error
 LOOP:
@@ -355,7 +359,7 @@ LOOP:
 		err = h.execute(ctx, e.Query, e)
 		//fmt.Println(err)
 		if err != nil {
-			stats.AddStatic("ExecSQLFail",1,false)
+			stats.AddStatic("ExecSQLFail", 1, false)
 			if mysqlError, ok = err.(*mysql.MySQLError); ok {
 				//If TiDB thrown 1205: Lock wait timeout exceeded; try restarting transaction
 				//we try again until execute success
@@ -369,7 +373,7 @@ LOOP:
 	case util.EventStmtPrepare:
 		err = h.stmtPrepare(ctx, e.StmtID, e.Query)
 		if err != nil {
-			stats.AddStatic("ExecSQLFail",1,false)
+			stats.AddStatic("ExecSQLFail", 1, false)
 			if mysqlError, ok := err.(*mysql.MySQLError); ok {
 				logstr := fmt.Sprintf("prepare statment exec fail ,%s , %d ,%s ",
 					e.Query, mysqlError.Number, mysqlError.Message)
@@ -387,7 +391,7 @@ LOOP:
 		RETRYCOMSTMTEXECUTE:
 			err = h.stmtExecute(ctx, e.StmtID, e.Params, e)
 			if err != nil {
-				stats.AddStatic("ExecSQLFail",1,false)
+				stats.AddStatic("ExecSQLFail", 1, false)
 				if mysqlError, ok = err.(*mysql.MySQLError); ok {
 					//If TiDB thrown 1205: Lock wait timeout exceeded; try restarting transaction
 					//we try again until execute success
@@ -408,8 +412,8 @@ LOOP:
 	case util.EventHandshake:
 		h.quit(false)
 		err = h.handshake(ctx, e.DB)
-		if err !=nil{
-			stats.AddStatic("ExecSQLFail",1,false)
+		if err != nil {
+			stats.AddStatic("ExecSQLFail", 1, false)
 		}
 	case util.EventQuit:
 		h.quit(false)

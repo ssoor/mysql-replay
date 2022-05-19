@@ -74,14 +74,16 @@ func (cfg *Config) CheckParamValid() error {
 		return err
 	}
 
-	err = cfg.CheckDsn()
-	if err != nil {
-		return err
-	}
+	if len(cfg.Dsn) != 0 {
+		err = cfg.CheckDsn()
+		if err != nil {
+			return err
+		}
 
-	err = cfg.TryConnectDstDB()
-	if err != nil {
-		return err
+		err = cfg.TryConnectDstDB()
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
