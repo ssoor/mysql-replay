@@ -140,6 +140,26 @@ func (pr *PacketRes) GetColumnVal() [][]driver.Value {
 	return nil
 }
 
+func (pr *PacketRes) GetColumnNames() []string {
+	var columns []mysqlField
+	if pr.bRows != nil {
+		columns = pr.bRows.rs.columns
+	} else if pr.tRows != nil {
+		columns = pr.tRows.rs.columns
+	}
+
+	if columns == nil {
+		return nil
+	}
+
+	var columnNames []string
+	for _, column := range columns {
+		columnNames = append(columnNames, column.name)
+	}
+
+	return columnNames
+}
+
 //Store network packet, parse SQL statement and result packet
 type MySQLFSM struct {
 	log *zap.Logger
