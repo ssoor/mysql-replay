@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql/driver"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -94,6 +95,14 @@ type ReplayRes struct {
 	ColValues [][]driver.Value
 }
 
+func (rr ReplayRes) MarshalJSON() ([]byte, error) {
+	if rr.SqlStatment == "" {
+		return []byte("{}"), nil
+	}
+
+	return json.Marshal(rr)
+}
+
 //use for save result from packet (pcap)
 type PacketRes struct {
 	//save for query result
@@ -114,6 +123,61 @@ type PacketRes struct {
 	ifReadColEndEofPacket bool
 	//Indicates whether the result set is finished reading
 	ifReadResEnd bool
+}
+
+func ConvertResToStr(v [][]driver.Value) ([][]string, error) {
+	resSet := make([][]string, 0)
+	for a := range v {
+		rowStr := make([]string, 0)
+		for b := range v[a] {
+			var c string
+			if v[a][b] == nil {
+				//pay attention on the following logic
+				//If driver.Value is nil, we convert it to a string of length 0,
+				//but then we can't compare nil to a string of length 0
+				c = ""
+				rowStr = append(rowStr, c)
+				continue
+			}
+			err := ConvertAssignRows(v[a][b], &c)
+			if err != nil {
+				return nil, err
+			} else {
+				rowStr = append(rowStr, c)
+			}
+		}
+		resSet = append(resSet, rowStr)
+	}
+	return resSet, nil
+}
+
+func (pr *PacketRes) MarshalJSON() ([]byte, error) {
+	val := pr.GetColumnVal()
+	if val != nil {
+		results := []interface{}{}
+		prResult, err := ConvertResToStr(val)
+		if err != nil {
+			return nil, err
+		}
+
+		names := pr.GetColumnNames()
+		for _, res := range prResult {
+			if len(names) != len(res) {
+				results = append(results, res)
+				continue
+			}
+			resMap := make(map[string]string)
+			for i, name := range names {
+				resMap[name] = res[i]
+			}
+
+			results = append(results, resMap)
+		}
+
+		return json.Marshal(results)
+	}
+
+	return []byte("[]"), nil
 }
 
 func (pr *PacketRes) GetSqlBeginTime() uint64 {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -24,6 +25,15 @@ type MySQLPacket struct {
 
 type ConnID [2]gopacket.Flow
 
+func (pr ConnID) MarshalJSON() ([]byte, error) {
+	info := map[string]string{
+		"src": pr.SrcAddr(),
+		"dst": pr.DstAddr(),
+	}
+
+	return json.Marshal(info)
+}
+
 func (k ConnID) SrcAddr() string {
 	return k[0].Src().String() + ":" + k[1].Src().String()
 }
@@ -39,7 +49,6 @@ func (k ConnID) String() string {
 func (k ConnID) Reverse() ConnID {
 	return ConnID{k[0].Reverse(), k[1].Reverse()}
 }
-
 
 func (k ConnID) Hash() uint64 {
 	h := fnvHash(k[0].Src().Raw(), k[1].Src().Raw()) + fnvHash(k[0].Dst().Raw(), k[1].Dst().Raw())

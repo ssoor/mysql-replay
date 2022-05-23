@@ -59,7 +59,7 @@ func NewReplayEventHandler(conn stream.ConnID, log *zap.Logger, cfg *util.Config
 		ctx:            context.Background(),
 		ch:             make(chan stream.MySQLEvent, 10000),
 		wg:             new(sync.WaitGroup),
-		stmts:          make(map[uint64]statement),
+		stmts:          make(map[string]statement),
 		once:           new(sync.Once),
 		wf:             NewWriteFile(),
 		fileNamePrefix: conn.HashStr() + ":" + conn.SrcAddr(),
@@ -80,7 +80,7 @@ type ReplayEventHandler struct {
 	schema                      string
 	pool                        *sql.DB
 	conn                        *sql.Conn
-	stmts                       map[uint64]statement
+	stmts                       map[string]statement
 	ctx                         context.Context
 	filterStr                   string
 	needCompareRes              bool
@@ -551,7 +551,7 @@ func (h *ReplayEventHandler) execute(ctx context.Context, query string, e *strea
 }
 
 //Exec prepare statment on replay sql
-func (h *ReplayEventHandler) stmtPrepare(ctx context.Context, id uint64, query string) error {
+func (h *ReplayEventHandler) stmtPrepare(ctx context.Context, id string, query string) error {
 	stmt := h.stmts[id]
 	stmt.query = query
 	if stmt.handle != nil {
@@ -588,7 +588,7 @@ func (h *ReplayEventHandler) getQuery(s *sql.Stmt) string {
 }
 
 //Exec prepare on replay server
-func (h *ReplayEventHandler) stmtExecute(ctx context.Context, id uint64, params []interface{}, e *stream.MySQLEvent) error {
+func (h *ReplayEventHandler) stmtExecute(ctx context.Context, id string, params []interface{}, e *stream.MySQLEvent) error {
 	stmt, err := h.getStmt(ctx, id)
 	if err != nil {
 		return err
@@ -623,7 +623,7 @@ func (h *ReplayEventHandler) stmtExecute(ctx context.Context, id uint64, params 
 }
 
 //Close prepare handle
-func (h *ReplayEventHandler) stmtClose(id uint64) {
+func (h *ReplayEventHandler) stmtClose(id string) {
 	stmt, ok := h.stmts[id]
 	if !ok {
 		return
@@ -638,7 +638,7 @@ func (h *ReplayEventHandler) stmtClose(id uint64) {
 }
 
 //Get prepare handle ID
-func (h *ReplayEventHandler) getStmt(ctx context.Context, id uint64) (*sql.Stmt, error) {
+func (h *ReplayEventHandler) getStmt(ctx context.Context, id string) (*sql.Stmt, error) {
 	stmt, ok := h.stmts[id]
 	if ok && stmt.handle != nil {
 		return stmt.handle, nil

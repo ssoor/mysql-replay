@@ -23,7 +23,7 @@
 
 package util
 
-var UINT64MAX uint64= 1<<64 -1
+var UINT64MAX uint64 = 1<<64 - 1
 
 const (
 	StateInit = iota
@@ -42,8 +42,30 @@ const (
 	StateComStmtExecute2
 	StateSkipPacket
 )
+
+type MysqlEventType uint64
+
+func (e MysqlEventType) String() string {
+	return eventMap[(e)]
+}
+
+func (e MysqlEventType) MarshalJSON() ([]byte, error) {
+	return []byte("\"" + eventMap[(e)] + "\""), nil
+}
+
+var (
+	eventMap = map[MysqlEventType]string{
+		EventHandshake:   "handshake",
+		EventQuit:        "quit",
+		EventQuery:       "query",
+		EventStmtPrepare: "stmt_prepare",
+		EventStmtExecute: "stmt_execute",
+		EventStmtClose:   "stmt_close",
+	}
+)
+
 const (
-	EventHandshake uint64 = iota
+	EventHandshake MysqlEventType = iota + 1
 	EventQuit
 	EventQuery
 	EventStmtPrepare
@@ -61,7 +83,6 @@ const (
 	NeedWriteLog
 	NeedReplaySQL
 )
-
 
 const (
 	SelectStmt uint16 = iota
