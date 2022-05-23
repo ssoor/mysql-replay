@@ -69,9 +69,11 @@ func (cfg *Config) CheckParamValid() error {
 		return err
 	}
 
-	err = cfg.CheckStoreDir()
-	if err != nil {
-		return err
+	if len(cfg.StoreDir) != 0 {
+		err = cfg.CheckStoreDir()
+		if err != nil {
+			return err
+		}
 	}
 
 	if len(cfg.Dsn) != 0 {
@@ -103,7 +105,7 @@ func (cfg *Config) CheckOutputDir() error {
 
 func (cfg *Config) CheckStoreDir() error {
 	switch cfg.RunType {
-	case RunDir, RunOnline:
+	case RunOnline:
 		if len(cfg.StoreDir) == 0 {
 			return errors.New("store dir len is zero")
 		}

@@ -263,6 +263,7 @@ func (h *ReplayEventHandler) DoEvent(e stream.MySQLEvent) {
 		h.ReplayEventAndWriteRes(e)
 		return
 	}
+
 	handleType := h.cfg.CheckNeedReplay(e.Time)
 	switch handleType {
 	case util.NotWriteLog:
@@ -270,6 +271,10 @@ func (h *ReplayEventHandler) DoEvent(e stream.MySQLEvent) {
 	case util.NeedWriteLog:
 		h.WriteEvent(e)
 	case util.NeedReplaySQL:
+		//e.Rr = new(stream.ReplayRes)
+		e.NewReplayRes()
+		//e.InitRr()
+
 		h.ReplayEventAndWriteRes(e)
 	default:
 		h.log.Warn(fmt.Sprintf("unsport case %v", handleType))
@@ -303,6 +308,7 @@ func (h *ReplayEventHandler) ReplayEvent(ch chan stream.MySQLEvent, wg *sync.Wai
 		e, ok := <-ch
 		if ok {
 			h.DoEvent(e)
+			h.writeEventToFile(e)
 		} else {
 			wg.Done()
 			h.log.Info("thread end to run for apply mysql event " + h.fileNamePrefix)
@@ -313,13 +319,38 @@ func (h *ReplayEventHandler) ReplayEvent(ch chan stream.MySQLEvent, wg *sync.Wai
 
 }
 
+var eventsMap sync.Map
+
+func (h *ReplayEventHandler) writeEventToFile(e stream.MySQLEvent) {
+	hash := e.Conn.HashStr()
+
+	events := []stream.MySQLEvent{}
+	if v, ok := eventsMap.Load(hash); ok {
+		events = v.([]stream.MySQLEvent)
+	}
+	events = append(events, e)
+
+	eventsMap.Store(hash, events)
+
+	writeMap := map[interface{}]interface{}{}
+	eventsMap.Range(func(key, value interface{}) bool {
+		writeMap[key] = value
+		return true
+	})
+
+	jsonBytes, err := json.Marshal(writeMap)
+	if err == nil {
+		err = os.WriteFile(h.cfg.OutputDir+"/mysql_events.json", jsonBytes, 0644)
+		if err != nil {
+			h.log.Warn(fmt.Sprintf("write file fail , %v", err))
+		}
+	}
+}
+
 func (h *ReplayEventHandler) OnEvent(e stream.MySQLEvent) {
 	//Process SQL events. Note that unlike the events in binlog,
 	//this SQL event is raw and may involve multiple rows
 
-	//e.Rr = new(stream.ReplayRes)
-	e.NewReplayRes()
-	//e.InitRr()
 	h.once.Do(func() {
 		h.wg.Add(1)
 		go h.ReplayEvent(h.ch, h.wg)
@@ -330,6 +361,8 @@ func (h *ReplayEventHandler) OnEvent(e stream.MySQLEvent) {
 	/*if len(h.ch) >90000 && len(h.ch)% 1000 ==0{
 		h.log.Warn("sql Channel is nearly  full , " + fmt.Sprintf("%v-%v",len(h.ch),100000))
 	}*/
+
+	h.log.Info(fmt.Sprintf("OnEvent: %s", e.String()))
 }
 
 func (h *ReplayEventHandler) OnClose() {
