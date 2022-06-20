@@ -247,7 +247,7 @@ func (rows *textRows) readRow(dest []driver.Value) error {
 	fsm.pr.packetnum++
 	data := rows.fsm.data.Bytes()
 	// EOF Packet
-	if data[0] == iEOF && len(data) == 5 {
+	if data[0] == iEOF {
 		// server_status [2 bytes]
 		fsm.pr.status = readStatus(data[3:])
 		rows.rs.done = true
@@ -380,7 +380,7 @@ func (rows *binaryRows) readRow(dest []driver.Value) error {
 			continue
 
 		case fieldTypeLongLong:
-			var a string =string(data[pos : pos+8])
+			var a string = string(data[pos : pos+8])
 			if rows.rs.columns[i].flags&flagUnsigned != 0 {
 				val := binary.LittleEndian.Uint64([]byte(a))
 				if val > math.MaxInt64 {
@@ -413,7 +413,7 @@ func (rows *binaryRows) readRow(dest []driver.Value) error {
 			fieldTypeVarString, fieldTypeString, fieldTypeGeometry, fieldTypeJSON:
 			var isNull bool
 			var n int
-			var a string=string(data[pos:])
+			var a string = string(data[pos:])
 			dest[i], isNull, n, err = readLengthEncodedString([]byte(a))
 			//fmt.Println(dest[i],n,isNull,err)
 			pos += n
@@ -454,7 +454,7 @@ func (rows *binaryRows) readRow(dest []driver.Value) error {
 						rows.rs.columns[i].decimals,
 					)
 				}
-				var as string = string(data[pos:pos+int(num)])
+				var as string = string(data[pos : pos+int(num)])
 				dest[i], err = formatBinaryTime([]byte(as), dstlen)
 			case rows.fsm.pr.parseTime:
 				var as string = string(data[pos:])
@@ -476,7 +476,7 @@ func (rows *binaryRows) readRow(dest []driver.Value) error {
 						)
 					}
 				}
-				var as string = string(data[pos:pos+int(num)])
+				var as string = string(data[pos : pos+int(num)])
 				dest[i], err = formatBinaryDateTime([]byte(as), dstlen)
 			}
 

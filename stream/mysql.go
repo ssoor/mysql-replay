@@ -1247,10 +1247,10 @@ func (fsm *MySQLFSM) handleReadSQLResult() error { //ColumnNum() error {
 		if res {
 			data := fsm.data.Bytes()
 			if data[0] == iEOF && !fsm.pr.ifReadColEndEofPacket {
-				fsm.pr.packetnum++
+				// fsm.pr.packetnum++
 				fsm.pr.ifReadColEndEofPacket = true
 				fsm.log.Debug("read packet reach EOF , process will ignore EOF ,wait next packet ")
-				return nil
+				// return nil
 			}
 		}
 
