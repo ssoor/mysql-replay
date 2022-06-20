@@ -264,7 +264,7 @@ func (h *ReplayEventHandler) DoEvent(e stream.MySQLEvent) {
 		return
 	}
 
-	handleType := h.cfg.CheckNeedReplay(e.Time)
+	handleType := h.cfg.CheckNeedReplay(e.Time.UnixNano())
 	switch handleType {
 	case util.NotWriteLog:
 		return
@@ -332,9 +332,9 @@ func (h *ReplayEventHandler) writeEventToFile(e stream.MySQLEvent) {
 
 	eventsMap.Store(hash, events)
 
-	writeMap := map[interface{}]interface{}{}
+	writeMap := map[string]interface{}{}
 	eventsMap.Range(func(key, value interface{}) bool {
-		writeMap[key] = value
+		writeMap[key.(string)] = value
 		return true
 	})
 
